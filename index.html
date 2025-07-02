@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SBS | Prospect Intelligence Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Strategic Neutrals -->
+    <!-- Application Structure Plan: A dynamic, single-page dashboard. The main view provides a high-level overview with summary KPIs, two charts (priority and location distribution), and a fully searchable/filterable list of all prospects. This allows for quick identification of key targets. Clicking any prospect transitions the view to a detailed "dossier" page for that specific contact, presenting the in-depth analysis and strategic outreach plan from the report. This two-level structure (overview -> detail) was chosen to mirror a salesperson's natural workflow: first identify who to contact, then review the specific strategy. It prevents information overload and makes the intelligence highly actionable. -->
+    <!-- Visualization & Content Choices: 
+        1. KPI Cards: Goal=Inform. Method=Styled HTML. Interaction=None. Justification=Provide immediate, top-line metrics.
+        2. Priority Distribution: Goal=Compare/Inform. Method=Donut Chart (Chart.js/Canvas). Interaction=Hover tooltips. Justification=Instantly show the quality mix of the prospect list.
+        3. Geographic Distribution: Goal=Relationships/Inform. Method=Bar Chart (Chart.js/Canvas). Interaction=Hover tooltips. Justification=Visualize key geographic clusters without the complexity of a map library.
+        4. Prospect List: Goal=Organize/Filter. Method=Interactive HTML table. Interaction=Clickable rows, text search, dropdown filters. Justification=The core tool for navigating and segmenting the prospect data.
+        5. Prospect Dossier: Goal=Detail/Inform. Method=Dynamically populated HTML content block. Interaction=Activated by click, with a close button. Justification=Provides the deep-dive intelligence on-demand, keeping the main interface clean and focused.
+        6. Gemini Email Generation: Goal=Action. Method=API call on button click within dossier. Justification=Turns insight into immediate, actionable outreach.
+        7. Gemini Summary Generation: Goal=Synthesize. Method=API call on button click on main dashboard. Justification=Provides a high-level strategic overview of the entire dataset.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .chart-container { position: relative; width: 100%; max-width: 500px; margin-left: auto; margin-right: auto; height: 300px; max-height: 350px; }
+        @media (min-width: 768px) { .chart-container { height: 350px; } }
+        .priority-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; flex-shrink: 0; }
+        .priority-hot { background-color: #ef4444; }
+        .priority-warm { background-color: #f59e0b; }
+        .priority-cold { background-color: #3b82f6; }
+        .priority-hold { background-color: #6b7280; }
+        #detailView { display: none; }
+        .dossier-content h1 { font-size: 1.875rem; font-weight: 700; margin-bottom: 1rem; color: #1f2937;}
+        .dossier-content h2 { font-size: 1.5rem; font-weight: 600; margin-top: 2rem; margin-bottom: 1rem; color: #1f2937; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.5rem;}
+        .dossier-content h3 { font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; color: #374151;}
+        .dossier-content h4 { font-size: 1.125rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #4b5563;}
+        .dossier-content p { margin-bottom: 1rem; line-height: 1.6; color: #4b5563; }
+        .dossier-content ul { list-style-position: inside; margin-left: 1rem; margin-bottom: 1rem; }
+        .dossier-content li { margin-bottom: 0.5rem; }
+        .dossier-content strong { color: #1f2937; }
+        .dossier-content code { background-color: #e5e7eb; padding: 0.2rem 0.4rem; border-radius: 0.25rem; font-family: monospace; }
+        #emailModal, #summaryModal { display: none; }
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="text-slate-800">
+
+    <div id="mainView">
+        <header class="bg-white shadow-sm sticky top-0 z-20">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+                <div>
+                    <h1 class="text-2xl font-bold text-slate-900">Prospect Intelligence Dashboard</h1>
+                    <p class="text-sm text-slate-500">Strategic insights for Smart Building Solutions.</p>
+                </div>
+                <button id="generateSummaryBtn" class="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white font-semibold rounded-md hover:bg-purple-700 transition">
+                    <span id="summaryBtnText">✨ Generate Executive Summary</span>
+                    <div id="summarySpinner" class="spinner" style="display: none;"></div>
+                </button>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <!-- KPIs -->
+            <section id="kpi-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <!-- KPI cards will be generated here -->
+            </section>
+
+            <!-- Charts -->
+            <section class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h2 class="text-lg font-semibold mb-4 text-center">Prospects by Priority</h2>
+                    <div class="chart-container">
+                        <canvas id="priorityChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h2 class="text-lg font-semibold mb-4 text-center">Prospects by Location</h2>
+                    <div class="chart-container">
+                        <canvas id="locationChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Prospect List -->
+            <section class="bg-white p-6 rounded-lg shadow">
+                <div class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                    <h2 class="text-xl font-semibold">Prospect List</h2>
+                    <div class="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
+                        <input type="text" id="searchInput" placeholder="Search by name or company..." class="w-full md:w-64 px-4 py-2 border border-slate-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500">
+                        <select id="priorityFilter" class="w-full sm:w-auto px-4 py-2 border border-slate-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500">
+                            <option value="all">All Priorities</option>
+                            <option value="Hot">Hot 🔴</option>
+                            <option value="Warm">Warm 🟡</option>
+                            <option value="Cold">Cold 🔵</option>
+                            <option value="Hold/Re-research">Hold ⚪</option>
+                        </select>
+                        <select id="stateFilter" class="w-full sm:w-auto px-4 py-2 border border-slate-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500">
+                            <option value="all">All States</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-slate-50">
+                            <tr>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Company</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Location</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Priority</th>
+                            </tr>
+                        </thead>
+                        <tbody id="prospectsTable" class="bg-white divide-y divide-slate-200">
+                            <!-- Prospect rows will be generated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div id="detailView" class="bg-white min-h-screen">
+        <header class="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
+            <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+                <h2 id="detailHeader" class="text-xl font-bold text-slate-900">Prospect Dossier</h2>
+                <div>
+                    <button id="generateEmailBtn" class="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white font-semibold rounded-md hover:bg-purple-700 transition mr-4">
+                         <span id="emailBtnText">✨ Draft Outreach Email</span>
+                         <div id="emailSpinner" class="spinner" style="display: none;"></div>
+                    </button>
+                    <button id="closeDetailView" class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-md hover:bg-indigo-700 transition">← Back to Dashboard</button>
+                </div>
+            </div>
+        </header>
+        <main class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div id="dossierContent" class="prose max-w-none dossier-content">
+                <!-- Dossier content will be injected here -->
+            </div>
+        </main>
+    </div>
+    
+    <!-- Email Modal -->
+    <div id="emailModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div class="p-4 border-b flex justify-between items-center">
+                <h3 class="text-lg font-semibold">Generated Outreach Email</h3>
+                <button id="closeEmailModal" class="text-slate-400 hover:text-slate-600">&times;</button>
+            </div>
+            <div id="emailContent" class="p-6 overflow-y-auto"></div>
+            <div class="p-4 border-t bg-slate-50 flex justify-end">
+                 <button id="copyEmailBtn" class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-md hover:bg-indigo-700 transition">Copy to Clipboard</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Summary Modal -->
+    <div id="summaryModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+            <div class="p-4 border-b flex justify-between items-center">
+                <h3 class="text-lg font-semibold">✨ AI-Generated Executive Summary</h3>
+                <button id="closeSummaryModal" class="text-slate-400 hover:text-slate-600">&times;</button>
+            </div>
+            <div id="summaryContent" class="p-6 overflow-y-auto prose max-w-none"></div>
+             <div class="p-4 border-t bg-slate-50 flex justify-end">
+                 <button id="copySummaryBtn" class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-md hover:bg-indigo-700 transition">Copy to Clipboard</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+const prospectsData = [
+    {
+        id: 0,
+        name: 'Brent Sherman',
+        company: 'Security 101',
+        location: 'Chicago, IL',
+        priority: 'Hot',
+        dossier: `
+            <h1>Dossier: Brent Sherman, General Manager - Security 101</h1>
+            <h4>Prospect & Company Snapshot</h4>
+            <p><strong>Contact Validation:</strong> The email <code>brent.sherman@security101.com</code> is confirmed as accurate. His current title is General Manager of the Security 101 - Chicago office.</p>
+            <p><strong>Company Profile:</strong> Security 101 is a top-tier, nationally recognized leader in the commercial security integration space, noted as one of the fastest-growing integrators in the United States. The Chicago branch, located at 761 North 17th Street, Unit 32, St. Charles, IL, is a critical hub.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> Brent Sherman is the founder of Chicago Security Integrators (CSI), which he sold to Security 101. As GM, he is tasked with integrating his legacy business into the larger corporate framework, driving new sales, and holds P&L accountability for the Chicago region.</p>
+            <h4>Corporate Intelligence & Technology Profile</h4>
+            <p><strong>Services & Solutions Analysis:</strong> Core offerings include Access Control, Video Surveillance, and Intrusion Detection. Crucially, corporate marketing is heavily oriented towards "AI-Powered Threat Detection and Response" and "Cloud-based Security," making Arteco a direct match for their stated strategy.</p>
+            <p><strong>Identified Technology Partners & Stack:</strong> Security 101 partners with Genetec, Milestone, Avigilon, Hanwha Vision, and Verkada. Arteco must be positioned as a superior or specialized solution focused on advanced AI analytics.</p>
+            <p><strong>Target Vertical Markets:</strong> The Chicago branch targets Advanced Manufacturing, Financial Services, and the "Innovation Economy."</p>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Identified Trigger Event & Hook:</strong> The acquisition of his company, CSI, by Security 101 is a transformative event. His public statement about an "even brighter future" provides a powerful, personalized hook.</p>
+            <p><strong>SBS Product Alignment Score:</strong> Arteco: High, Winnie Industries: Medium, PureNet: High.</p>
+            <p><strong>Strategic Implications:</strong> Brent is in a period of strategic re-evaluation. He will be highly open to new solutions that provide a demonstrable competitive advantage and help him meet the growth expectations of the parent company.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🔴 Hot</p>
+            <p><strong>Recommended Next Action:</strong> A direct phone call is warranted, followed by a personalized email.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Congratulate him on the acquisition.</li>
+                <li>Directly link outreach to the opportunities of scaling the Chicago operation.</li>
+                <li>Introduce Arteco as the specific solution to deliver on Security 101's national vision for AI.</li>
+                <li>Frame the call-to-action as a strategic discussion to be a resource for his "next chapter."</li>
+            </ul>
+        `
+    },
+    {
+        id: 1,
+        name: 'Mick Baran',
+        company: 'PowerTech',
+        location: 'Chicago, IL',
+        priority: 'Hot',
+        dossier: `
+            <h1>Dossier: Mick Baran, Owner - PowerTech</h1>
+            <h4>Prospect & Company Snapshot</h4>
+            <p><strong>Contact Validation:</strong> The email is mbaran@powertechil.com. The title is Owner.</p>
+            <p><strong>Company Profile:</strong> PowerTech Group of Chicago is a licensed security company and UL Listed provider based in Arlington Heights, IL, focusing on industrial and commercial clients.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> As the Owner, Mick Baran is the ultimate decision-maker for technology choices, service offerings, and strategic direction.</p>
+            <h4>Corporate Intelligence & Technology Profile</h4>
+            <p><strong>Services & Solutions Analysis:</strong> Services include Security Systems, Managed IT, and Structured Wiring. They partner with alarm.com for the SMB market, showing comfort with app-based platforms.</p>
+            <p><strong>Identified Technology Partners & Stack:</strong> No specific VMS or access control hardware partners are listed for their commercial clients, presenting a greenfield opportunity.</p>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Relationship History & Context:</strong> Crucial CRM notes: "re-intro email - knew him from ADI" and "<strong>cloud/AI interest</strong>." This is a warm lead with explicit intent data.</p>
+            <p><strong>Identified Trigger Event & Hook:</strong> The "cloud/AI interest" note is the primary hook. The outreach can be framed as a direct response to his known interests.</p>
+            <p><strong>SBS Product Alignment Score:</strong> Arteco: Very High, Winnie Industries: High, PureNet: High.</p>
+            <p><strong>Strategic Implications:</strong> Mick has provided a clear roadmap. He is actively looking for next-gen security tech. The strategy is to immediately validate his interest and position Arteco as the best-in-class solution he has been searching for to gain a competitive edge in the crowded Chicago market.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🔴 Hot</p>
+            <p><strong>Recommended Next Action:</strong> A highly personalized email that leads with the AI/Cloud interest, followed by a phone call. The CRM note "Mick may be very responsive" reinforces that direct outreach is likely to be effective.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Reference the past relationship from the ADI days.</li>
+                <li>Lead with his known interest in cloud and AI solutions.</li>
+                <li>Position Arteco as the platform to give PowerTech a competitive edge.</li>
+                <li>The call-to-action should be a direct invitation for a virtual demo to see the AI in action.</li>
+            </ul>
+        `
+    },
+    {
+        id: 2,
+        name: 'Rich Lembcke',
+        company: 'Faith Technologies',
+        location: 'Appleton, WI',
+        priority: 'Hot',
+        dossier: `
+            <h1>Dossier: Rich Lembcke, Specialty Systems Service Superintendent - Faith Technologies</h1>
+            <h4>Prospect & Company Snapshot</h4>
+            <p><strong>Company Profile:</strong> Faith Technologies is a major electrical contractor that has expanded into low-voltage and security integration. They are known for handling large-scale, complex projects in industrial and healthcare sectors.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> As a Superintendent for specialty systems, Rich is a key technical authority involved in planning and executing large projects. His recommendations on products and solutions are highly influential.</p>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Relationship History & Context:</strong> A pre-existing professional relationship from "Now Micro days" is noted in the CRM. A detailed multi-step outreach plan was already documented, indicating a high level of prior qualification.</p>
+            <p><strong>Identified Trigger Event & Hook:</strong> The combination of the past relationship and Faith's focus on demanding environments creates a powerful hook. The conversation is a re-connection, not a cold call.</p>
+            <p><strong>SBS Product Alignment Score:</strong> Winnie Industries: Very High, PureNet: Very High, Arteco: Medium (requires careful positioning around ease of integration).</p>
+            <p><strong>Strategic Implications:</strong> Faith Technologies is a prime candidate for infrastructure-led sales. Their expertise in large-scale electrical projects makes them perfectly suited for Winnie's ruggedized solutions and PureNet's high-performance cabling. The Arteco pitch should be framed as a high-value technology offering that can be seamlessly added to their existing portfolio.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🔴 Hot</p>
+            <p><strong>Recommended Next Action:</strong> Execute the next step in the pre-defined CRM cadence, which is a phone call follow-up.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Leverage the past "Now Micro" relationship to build instant rapport.</li>
+                <li>Focus the discussion on supporting their large-scale, complex projects.</li>
+                <li>Emphasize the reliability and durability of Winnie and PureNet for their demanding industrial and healthcare clients.</li>
+                <li>Keep the pressure low and aim to re-establish the connection and position SBS as a key resource.</li>
+            </ul>
+        `
+    },
+    {
+        id: 3,
+        name: 'Mike Mayes',
+        company: 'Honor Security',
+        location: 'Green Bay, WI',
+        priority: 'Warm',
+        dossier: `
+            <h1>Dossier: Mike Mayes, Founder - Honor Security</h1>
+            <h4>Prospect & Company Snapshot</h4>
+            <p><strong>Contact Validation:</strong> Email mmayes@honorsecurity.co. A critical data discrepancy exists: CRM lists Green Bay, WI, but all web evidence (website, phone area code) points to a Michigan-based operation. This must be clarified.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> As the Founder, Mike Mayes is the principal decision-maker.</p>
+            <h4>Corporate Intelligence & Technology Profile</h4>
+            <p><strong>Services & Solutions Analysis:</strong> Website lists a full suite of services including "Cloud-Based Security Systems" and "Structured Cabling."</p>
+            <p><strong>Identified Technology Partners & Stack:</strong> No specific partners are listed on their website. This is a significant "greenfield" opportunity with no entrenched competitor to displace.</p>
+            <p><strong>Target Vertical Markets:</strong> A key highlighted project is with Star of the West Milling Co., a major player in the agricultural industry. This suggests expertise in a harsh environment vertical.</p>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Identified Trigger Event & Hook:</strong> The need to tactfully resolve the geographic discrepancy is an immediate, rapport-building hook. The Star of the West project is a powerful secondary hook to show tailored research.</p>
+            <p><strong>SBS Product Alignment Score:</strong> Winnie Industries: High (due to agricultural project), PureNet: High (listed as a service), Arteco: Medium.</p>
+            <p><strong>Strategic Implications:</strong> This appears to be a smaller, relationship-focused integrator. They can become very loyal partners if given good support. The lack of advertised partners is a golden opportunity to become their go-to supplier.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🟡 Warm</p>
+            <p><strong>Recommended Next Action:</strong> A carefully crafted follow-up email to clarify location and introduce value.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Address the location discrepancy with genuine curiosity.</li>
+                <li>Pivot immediately to the Star of the West project, demonstrating specific research.</li>
+                <li>Position Winnie Industries as a perfect fit for their work in demanding agricultural/industrial environments.</li>
+                <li>Offer a low-pressure invitation to connect and explore a partnership.</li>
+            </ul>
+        `
+    },
+    {
+        id: 4,
+        name: 'Jim Sjoblom',
+        company: 'Real World Technologies Inc.',
+        location: 'Schaumburg, IL',
+        priority: 'Warm',
+        dossier: `
+            <h1>Dossier: Jim Sjoblom, CEO - Real World Technologies Inc.</h1>
+            <h4>Prospect & Company Snapshot</h4>
+            <p><strong>Contact Validation:</strong> Critical data correction: The company's main office is in Janesville, WI, not Schaumburg, IL. Jim Sjoblom is the Owner/CEO.</p>
+            <p><strong>Company Profile:</strong> A well-established integrator with 20+ years of experience. Their value proposition is built on custom solutions and robust support.</p>
+            <h4>Corporate Intelligence & Technology Profile</h4>
+            <p><strong>Services & Solutions Analysis:</strong> A key finding is their focus on a managed services model. They are a "Hattrix Managed Service Provider (MSP)," indicating a business strategy heavily invested in Recurring Monthly Revenue (RMR).</p>
+            <p><strong>Identified Technology Partners & Stack:</strong> The website explicitly states they partner with <strong>Exacq</strong> for surveillance solutions. Exacq is a direct competitor to Arteco. This is a competitive displacement opportunity.</p>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Relationship History & Context:</strong> Prior outreach focused on a "winnie info/sample offer."</p>
+            <p><strong>Identified Trigger Event & Hook:</strong> The most powerful hook is RWT's established RMR business model with Hattrix. The conversation must be framed around extending that successful strategy to video.</p>
+            <p><strong>SBS Product Alignment Score:</strong> Arteco: Medium-High (challenge is displacement, opportunity is VSaaS model), Winnie Industries: High, PureNet: High.</p>
+            <p><strong>Strategic Implications:</strong> Do not sell product features vs. Exacq. Sell a superior business model. Position Arteco as the engine for a profitable Video-Surveillance-as-a-Service (VSaaS) offering that they cannot easily build with Exacq. The AI analytics become new, billable monthly services.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🟡 Warm</p>
+            <p><strong>Recommended Next Action:</strong> A phone call or highly personalized email that pivots from product to business strategy.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Acknowledge their success with the Hattrix RMR model.</li>
+                <li>Pose a strategic question: "Have you considered applying that same model to your video offerings?"</li>
+                <li>Position Arteco not as another VMS, but as the platform to build a more profitable video practice that mirrors their success with Hattrix.</li>
+                <li>The call-to-action is for a business strategy discussion, not a product demo.</li>
+            </ul>
+        `
+    },
+    {
+        id: 5,
+        name: 'George Stanil',
+        company: 'Stanil Security',
+        location: 'IL',
+        priority: 'Hold/Re-research',
+        dossier: `
+            <h1>Dossier: George Stanil, Owner - Stanil Security</h1>
+            <h4>CRITICAL DATA UPDATE & ACTION REQUIRED</h4>
+            <p><strong>Finding:</strong> Open-source intelligence confirms that <strong>George Nick Stanil passed away on May 6, 2020.</strong></p>
+            <p><strong>Strategic Implication:</strong> All outreach to this individual and associated contact information must cease immediately. This contact record is invalid and represents a significant data quality issue that could lead to highly inappropriate and damaging outreach if not addressed.</p>
+            <p><strong>Next Steps:</strong></p>
+            <ul>
+                <li>The CRM record for George Stanil must be marked as deceased and archived.</li>
+                <li>The opportunity shifts from contacting a known individual to identifying the new leadership or ownership of Stanil Security.</li>
+                <li>Research is required to determine if the company is still in operation and who the current decision-makers are.</li>
+                <li>The original premise—that a newer company needs to establish foundational manufacturer partnerships—may still be valid, but the target contact is incorrect.</li>
+            </ul>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> ⚪ Hold/Re-research</p>
+            <p><strong>Recommended Next Action:</strong> <strong>DO NOT CONTACT.</strong> Initiate research to identify the current leadership of Stanil Security. No outreach should occur until a valid contact is identified and qualified.</p>
+        `
+    },
+    {
+        id: 6,
+        name: 'Dave Morefield',
+        company: 'Clear Communications',
+        location: 'Caledonia, WI',
+        priority: 'Cold',
+        dossier: `
+            <h1>Dossier: Dave Morefield, Senior System Designer - Clear Communications</h1>
+            <h4>Prospect & Company Snapshot</h4>
+            <p><strong>Contact Validation:</strong> Email dave.morefield@clearcominc.com is confirmed on company website. Title is Senior System Designer.</p>
+            <p><strong>Company Profile:</strong> B2B security and technology provider with offices in Caledonia and Fox Valley, WI. They offer a full suite of security, cabling, and managed IT services.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> As a Senior System Designer with 24+ years of experience, Dave Morefield is a key technical influencer. His recommendations on which products to use for client systems carry significant weight.</p>
+            <h4>Corporate Intelligence & Technology Profile</h4>
+            <p><strong>Services & Solutions Analysis:</strong> Their dual focus on physical security and the underlying network infrastructure makes them an ideal target for the entire SBS portfolio.</p>
+            <p><strong>Target Vertical Markets:</strong> A key testimonial from a SE Wisconsin Municipality highlights success in the government vertical.</p>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Relationship History & Context:</strong> Cold lead with no prior contact noted.</p>
+            <p><strong>Identified Trigger Event & Hook:</strong> The company published a detailed "Meet Our Team" blog post profiling Dave Morefield. This is a perfect, highly-personalized hook that provides insight into his background, values, and professional philosophy.</p>
+            <p><strong>SBS Product Alignment Score:</strong> Arteco: High, Winnie Industries: High, PureNet: High.</p>
+            <p><strong>Strategic Implications:</strong> Dave is the "trusted expert" persona. Winning his confidence is key. The approach should be a peer-level discussion about solving complex design challenges, referencing his long career and the industry's evolution that he himself has noted.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🔵 Cold</p>
+            <p><strong>Recommended Next Action:</strong> A personalized email that specifically references the blog post about him.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Lead with the personalized hook about his "Meet Our Team" feature.</li>
+                <li>Connect his stated philosophy about the industry's evolution to the SBS solutions.</li>
+                <li>Introduce the product lines as next-generation tools for the modern systems he engineers.</li>
+                <li>The call-to-action is an offer to be a resource for his future designs.</li>
+            </ul>
+        `
+    },
+    {
+        id: 7,
+        name: 'Tim Cook',
+        company: 'Security 101',
+        location: 'Dublin, OH',
+        priority: 'Warm',
+        dossier: `
+            <h1>Dossier: Tim Cook, General Manager - Security 101</h1>
+            <h4>Prospect & Company Snapshot</h4>
+            <p><strong>Contact Validation:</strong> Email tcook@security101.com is correct. He is the GM of the Columbus, OH office.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> As GM, he is the key decision-maker for the Columbus region, responsible for sales, operations, and profitability. A blog post suggests a hands-on leadership style.</p>
+            <h4>Corporate Intelligence & Technology Profile</h4>
+            <p><strong>Services & Solutions Analysis:</strong> The Columbus branch offers the full Security 101 portfolio, with the same corporate emphasis on AI and cloud solutions.</p>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Relationship History & Context:</strong> A follow-up is needed after a prior outreach. The contact is relatively cold.</p>
+            <p><strong>Identified Trigger Event & Hook:</strong> A company blog post features Tim Cook servicing cameras in harsh weather. This provides a personalized hook that speaks to his hands-on approach and the critical importance of equipment reliability.</p>
+            <p><strong>SBS Product Alignment Score:</strong> Winnie Industries: High (directly addresses the pain point of service calls in bad weather), Arteco: High, PureNet: High.</p>
+            <p><strong>Strategic Implications:</strong> A hands-on leader like Tim will have low tolerance for unreliable products. The sales message must be grounded in reliability and durability. The visual of him working in the cold is a powerful anchor for a conversation about how Winnie Industries reduces service calls and keeps his team out of the bad weather.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🟡 Warm</p>
+            <p><strong>Recommended Next Action:</strong> A personalized email that directly references the blog post.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Lead with the specific reference to the blog post of him working in the cold.</li>
+                <li>Connect that observation directly to the value of weather-resistant infrastructure.</li>
+                <li>Introduce Winnie Industries as the specific solution to the relatable problem of avoiding weather-related service calls.</li>
+                <li>Frame the call-to-action around making his installations more robust and reliable.</li>
+            </ul>
+        `
+    },
+    {
+        id: 8,
+        name: 'Ryan Juckett',
+        company: 'Convergint',
+        location: 'Schaumburg, IL',
+        priority: 'Warm',
+        dossier: `
+            <h1>Dossier: Ryan Juckett, Business Development Manager - Convergint</h1>
+            <h4>Prospect & Company Snapshot</h4>
+            <p><strong>Company Profile:</strong> Convergint is a top-tier global security systems integrator. They are a massive player in the market.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> As a Business Development Manager, Ryan's job is to find and develop new business opportunities. A key finding is his specialization in the cannabis vertical.</p>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Identified Trigger Event & Hook:</strong> His specialization in the high-growth, highly-regulated cannabis industry is a significant finding and provides a specific, tailored entry point. His recognition as a "40 under 40" winner suggests he is an ambitious and influential figure.</p>
+            <p><strong>SBS Product Alignment Score:</strong> Arteco: High (advanced analytics for seed-to-sale tracking and compliance), Winnie Industries: High (ideal for demanding grow-op environments).</p>
+            <p><strong>Strategic Implications:</strong> This niche focus allows for a highly targeted pitch. The conversation can be specifically about solving the unique challenges of the cannabis industry, a topic he is deeply engaged in. This avoids a generic product presentation and positions SBS as a specialist partner.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🟡 Warm</p>
+            <p><strong>Recommended Next Action:</strong> LinkedIn Message or personalized email.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Reference his expertise in the cannabis vertical.</li>
+                <li>Position Arteco's analytics for compliance monitoring and Winnie's infrastructure for grow-op environments.</li>
+                <li>Congratulate him on the "40 under 40" award to build rapport.</li>
+            </ul>
+        `
+    },
+    {
+        id: 9,
+        name: 'Manuel Arias',
+        company: 'Martin Systems Inc.',
+        location: 'Green Bay, WI',
+        priority: 'Warm',
+        dossier: `
+            <h1>Dossier: Manuel Arias, VP Operations - Martin Systems Inc.</h1>
+            <h4>Prospect & Company Snapshot</h4>
+            <p><strong>Company Profile:</strong> Martin Systems is a security integrator based in Green Bay, WI.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> As the newly appointed VP of Operations, Manuel is likely reviewing existing processes, partnerships, and strategies. He is responsible for the operational success of the company.</p>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Identified Trigger Event & Hook:</strong> His recent promotion to VP is a key organizational trigger. New leaders are often open to new ideas. A stated focus on expanding into the Milwaukee and Madison markets signals a growth phase where new technology partners may be sought.</p>
+            <p><strong>Strategic Implications:</strong> This is an opportune moment to introduce the full SBS portfolio as a strategic enabler for his expansion plans. Position SBS as a partner that can help him gain a competitive advantage in new markets.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🟡 Warm</p>
+            <p><strong>Recommended Next Action:</strong> Email or Phone Call.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Congratulate him on his new role as VP of Operations.</li>
+                <li>Reference his stated goal of expanding into Milwaukee and Madison.</li>
+                <li>Position the SBS portfolio as a strategic toolkit to help him successfully launch in those new markets.</li>
+            </ul>
+        `
+    },
+     {
+        id: 10,
+        name: 'Elisa Wilcox',
+        company: 'Security 101',
+        location: 'Indianapolis, IN',
+        priority: 'Hot',
+        dossier: `
+            <h1>Dossier: Elisa Wilcox, Branch Coordinator - Security 101</h1>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Relationship History & Context:</strong> This is a very warm and actionable lead. The CRM note "5/21 - set up call for Friday" indicates that a meeting has already been successfully scheduled.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> As Branch Coordinator, Elisa plays a crucial role in the operations and logistics of the Indianapolis office. While not the final decision-maker on technology standards, she is a key internal contact and gatekeeper. Establishing a positive relationship is vital for smooth business operations and getting access to other stakeholders.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🔴 Hot</p>
+            <p><strong>Recommended Next Action:</strong> <strong>EXECUTE THE SCHEDULED CALL.</strong></p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>This is not an initial outreach; it is a scheduled meeting. The primary goal is to execute the call professionally.</li>
+                <li>Be prepared to discuss the full SBS portfolio (Arteco, Winnie, PureNet) and how it can bring value to the Security 101 Indianapolis branch.</li>
+                <li>Listen to her needs and the challenges the branch faces to tailor the conversation.</li>
+                <li>Aim to establish a strong rapport and define clear next steps by the end of the call, which may involve a follow-up meeting with a technical contact or a general manager.</li>
+            </ul>
+        `
+    },
+    {
+        id: 11,
+        name: 'Fred Natale',
+        company: 'Data-Comm Sales',
+        location: 'Burr Ridge, IL',
+        priority: 'Hot',
+        dossier: `
+            <h1>Dossier: Fred Natale, President - Data-Comm Sales</h1>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Relationship History & Context:</strong> This is not a prospect but an active partner. The CRM note "5/2 Gary Sanitary District Project with Arteco, headed up by Danny" indicates a recent, specific, and successful project collaboration.</p>
+            <p><strong>Role & Inferred Responsibilities:</strong> As President, Fred is the key partner and decision-maker.</p>
+            <h4>Strategic Implications:</h4>
+            <p>The relationship is established. The focus should shift from introduction to account management and expansion. The goal is to replicate the success of the Gary Sanitary District project and deepen the partnership.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🔴 Hot (Active Partner)</p>
+            <p><strong>Recommended Next Action:</strong> Phone Call.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Discuss the successful Gary Sanitary District project.</li>
+                <li>Explore a pipeline of similar opportunities where Arteco and other SBS products can be positioned.</li>
+                <li>Treat this as a strategic partner planning session, not a sales call. Ask "How can we win more business together?"</li>
+            </ul>
+        `
+    },
+    {
+        id: 12,
+        name: 'Steve Burman',
+        company: 'Associated Technical Services',
+        location: 'Milwaukee, WI',
+        priority: 'Hot',
+        dossier: `
+            <h1>Dossier: Steve Burman, BDM - Chicago</h1>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Relationship History & Context:</strong> This is an extremely warm lead and an active opportunity. The CRM notes indicate a strong back-and-forth communication, an exchange of contact information, and a line card sent. The most critical note is: "he has some leads for me and going to look for more."</p>
+            <h4>Strategic Implications:</h4>
+            <p>This is a top-priority contact who has already agreed to act as a source of business referrals. The relationship has moved past the introductory phase and into active collaboration. The immediate goal is to retrieve the promised leads and schedule the in-person meeting that has been discussed.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🔴 Hot</p>
+            <p><strong>Recommended Next Action:</strong> Phone Call.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>"Steve, following up on our conversation. You mentioned you had some leads for me, and I'm eager to follow up on them."</li>
+                <li>"I'd like to get that site visit on the calendar. When is a good time for me to come out to East Troy?"</li>
+                <li>This is a direct, action-oriented call to capitalize on the opportunity he has presented.</li>
+            </ul>
+        `
+    },
+    {
+        id: 13,
+        name: 'Phil Knight',
+        company: 'Graybar',
+        location: 'Madison, IL',
+        priority: 'Hot',
+        dossier: `
+            <h1>Dossier: Phil Knight, Business Development Manager - Graybar</h1>
+            <h4>Relationship & Opportunity Analysis</h4>
+            <p><strong>Relationship History & Context:</strong> This is a warm channel partner relationship, not a cold lead. The CRM notes a previous in-person business lunch in October and his coverage of the Chicago area.</p>
+            <h4>Strategic Implications:</h4>
+            <p>A face-to-face meeting with a distributor BDM is a significant investment. The goal now is to build on that foundation and move beyond product sales (like the "wire sale") to a strategic partnership. As a distributor, Graybar is a gateway to hundreds of smaller integrators.</p>
+            <h4>Strategic Outreach Plan & Recommendations</h4>
+            <p><strong>Priority Level:</strong> 🔴 Hot</p>
+            <p><strong>Recommended Next Action:</strong> Phone Call.</p>
+            <p><strong>Primary Message Theme & Talking Points:</strong></p>
+            <ul>
+                <li>Reference the enjoyable lunch meeting in October to re-establish the personal connection.</li>
+                <li>"Phil, I want to move our conversation beyond just wire sales and talk about a more strategic partnership in the Chicago area."</li>
+                <li>"How can I help you and your sales team bring the full SBS portfolio (Arteco, Winnie) to your integrator customers?"</li>
+                <li>Offer to do joint sales calls, provide lunch-and-learn training for his team, or create co-branded marketing materials.</li>
+            </ul>
+        `
+    }
+];
+let currentProspectId = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    const prospectsTable = document.getElementById('prospectsTable');
+    const searchInput = document.getElementById('searchInput');
+    const priorityFilter = document.getElementById('priorityFilter');
+    const stateFilter = document.getElementById('stateFilter');
+    const kpiCardsContainer = document.getElementById('kpi-cards');
+
+    const mainView = document.getElementById('mainView');
+    const detailView = document.getElementById('detailView');
+    const closeDetailViewBtn = document.getElementById('closeDetailView');
+    const detailHeader = document.getElementById('detailHeader');
+    const dossierContent = document.getElementById('dossierContent');
+
+    const generateEmailBtn = document.getElementById('generateEmailBtn');
+    const emailModal = document.getElementById('emailModal');
+    const closeEmailModalBtn = document.getElementById('closeEmailModal');
+    const emailContent = document.getElementById('emailContent');
+    const copyEmailBtn = document.getElementById('copyEmailBtn');
+
+    const generateSummaryBtn = document.getElementById('generateSummaryBtn');
+    const summaryModal = document.getElementById('summaryModal');
+    const closeSummaryModalBtn = document.getElementById('closeSummaryModal');
+    const summaryContent = document.getElementById('summaryContent');
+    const copySummaryBtn = document.getElementById('copySummaryBtn');
+
+    const priorityMap = {
+        'Hot': { class: 'priority-hot', icon: '🔴' },
+        'Warm': { class: 'priority-warm', icon: '🟡' },
+        'Cold': { class: 'priority-cold', icon: '🔵' },
+        'Hold/Re-research': { class: 'priority-hold', icon: '⚪' }
+    };
+
+    function renderProspects(filteredData) {
+        prospectsTable.innerHTML = '';
+        if (filteredData.length === 0) {
+            prospectsTable.innerHTML = `<tr><td colspan="4" class="text-center py-8 text-slate-500">No prospects match the current filters.</td></tr>`;
+            return;
+        }
+        filteredData.forEach(p => {
+            const priorityInfo = priorityMap[p.priority] || { class: 'bg-slate-400', icon: '⚪' };
+            const row = `
+                <tr data-id="${p.id}" class="hover:bg-slate-100 cursor-pointer">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-slate-900">${p.name}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-slate-500">${p.company}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm text-slate-500">${p.location}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="flex items-center text-sm font-medium text-slate-800">
+                           <span class="priority-dot ${priorityInfo.class}"></span>
+                           ${p.priority}
+                        </span>
+                    </td>
+                </tr>
+            `;
+            prospectsTable.innerHTML += row;
+        });
+    }
+
+    function filterAndRender() {
+        const searchTerm = searchInput.value.toLowerCase();
+        const priority = priorityFilter.value;
+        const state = stateFilter.value;
+
+        const filtered = prospectsData.filter(p => {
+            const matchesSearch = p.name.toLowerCase().includes(searchTerm) || p.company.toLowerCase().includes(searchTerm);
+            const matchesPriority = priority === 'all' || p.priority === priority;
+            const matchesState = state === 'all' || p.location.endsWith(`, ${state}`);
+            return matchesSearch && matchesPriority && matchesState;
+        });
+        renderProspects(filtered);
+    }
+    
+    function populateStateFilter() {
+        const states = [...new Set(prospectsData.map(p => p.location.split(', ')[1]).filter(Boolean))].sort();
+        states.forEach(state => {
+            const option = document.createElement('option');
+            option.value = state;
+            option.textContent = state;
+            stateFilter.appendChild(option);
+        });
+    }
+
+    function renderKpiCards() {
+        const total = prospectsData.length;
+        const hotCount = prospectsData.filter(p => p.priority === 'Hot').length;
+        const warmCount = prospectsData.filter(p => p.priority === 'Warm').length;
+        const coldCount = prospectsData.filter(p => p.priority === 'Cold').length;
+
+        kpiCardsContainer.innerHTML = `
+            <div class="bg-white p-5 rounded-lg shadow"><div class="text-sm font-medium text-slate-500">Total Prospects</div><div class="text-3xl font-bold text-slate-900">${total}</div></div>
+            <div class="bg-white p-5 rounded-lg shadow"><div class="text-sm font-medium text-slate-500">Hot Prospects 🔴</div><div class="text-3xl font-bold text-red-500">${hotCount}</div></div>
+            <div class="bg-white p-5 rounded-lg shadow"><div class="text-sm font-medium text-slate-500">Warm Prospects 🟡</div><div class="text-3xl font-bold text-amber-500">${warmCount}</div></div>
+            <div class="bg-white p-5 rounded-lg shadow"><div class="text-sm font-medium text-slate-500">Cold Prospects 🔵</div><div class="text-3xl font-bold text-blue-500">${coldCount}</div></div>
+        `;
+    }
+
+    function renderPriorityChart() {
+        const ctx = document.getElementById('priorityChart').getContext('2d');
+        const counts = prospectsData.reduce((acc, p) => {
+            acc[p.priority] = (acc[p.priority] || 0) + 1;
+            return acc;
+        }, {});
+
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Hot', 'Warm', 'Cold', 'Hold/Re-research'],
+                datasets: [{
+                    data: [counts['Hot'], counts['Warm'], counts['Cold'], counts['Hold/Re-research']],
+                    backgroundColor: ['#ef4444', '#f59e0b', '#3b82f6', '#6b7280'],
+                    borderColor: '#ffffff',
+                    borderWidth: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '70%',
+                plugins: {
+                    legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8, padding: 20 } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.label || '';
+                                if (label) { label += ': '; }
+                                if (context.parsed !== null) { label += context.parsed; }
+                                return label;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    function renderLocationChart() {
+        const ctx = document.getElementById('locationChart').getContext('2d');
+        const stateCounts = prospectsData.reduce((acc, p) => {
+            const state = p.location.split(', ')[1];
+            if(state) {
+                acc[state] = (acc[state] || 0) + 1;
+            }
+            return acc;
+        }, {});
+        
+        const sortedStates = Object.entries(stateCounts).sort((a, b) => b[1] - a[1]);
+        const labels = sortedStates.map(entry => entry[0]);
+        const data = sortedStates.map(entry => entry[1]);
+
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Prospects',
+                    data: data,
+                    backgroundColor: '#3b82f6',
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: 'y',
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: { grid: { display: false } },
+                    y: { grid: { display: false } }
+                }
+            }
+        });
+    }
+    
+    function showDetailView(prospectId) {
+        currentProspectId = prospectId;
+        const prospect = prospectsData.find(p => p.id == prospectId);
+        if (!prospect) return;
+
+        detailHeader.textContent = `Dossier: ${prospect.name} - ${prospect.company}`;
+        dossierContent.innerHTML = prospect.dossier;
+        
+        mainView.style.display = 'none';
+        detailView.style.display = 'block';
+        window.scrollTo(0, 0);
+    }
+
+    function hideDetailView() {
+        detailView.style.display = 'none';
+        mainView.style.display = 'block';
+        currentProspectId = null;
+    }
+
+    async function handleGenerateEmail() {
+        if (currentProspectId === null) return;
+        const prospect = prospectsData.find(p => p.id === currentProspectId);
+        if (!prospect) return;
+
+        document.getElementById('emailBtnText').style.display = 'none';
+        document.getElementById('emailSpinner').style.display = 'block';
+
+        const prompt = `
+            You are an expert B2B sales assistant for Tom Buckley at Smart Building Solutions (SBS). Your task is to draft a concise, personalized, and compelling outreach email.
+            
+            My Name: Tom Buckley
+            My Company: Smart Building Solutions (SBS)
+            My Products: Arteco (AI Video Analytics), Winnie Industries (Rugged Infrastructure), PureNet (Structured Cabling).
+
+            Draft an email to the following prospect based on this intelligence dossier. The email should be professional, reference the key strategic hook, and have a clear call to action. Do not use placeholders like "[Your Name]". Sign off as Tom Buckley.
+
+            Prospect Dossier:
+            ${prospect.dossier}
+        `;
+
+        try {
+            let chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
+            const payload = { contents: chatHistory };
+            const apiKey = ""; 
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+            
+            if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
+                const text = result.candidates[0].content.parts[0].text;
+                emailContent.innerHTML = text.replace(/\n/g, '<br>');
+                emailModal.style.display = 'flex';
+            } else {
+                emailContent.innerHTML = '<p class="text-red-500">Error: Could not generate email. The API response was empty.</p>';
+                emailModal.style.display = 'flex';
+            }
+        } catch (error) {
+            console.error("Error generating email:", error);
+            emailContent.innerHTML = `<p class="text-red-500">An error occurred while generating the email. Please check the console for details.</p>`;
+            emailModal.style.display = 'flex';
+        } finally {
+            document.getElementById('emailBtnText').style.display = 'inline';
+            document.getElementById('emailSpinner').style.display = 'none';
+        }
+    }
+    
+    async function handleGenerateSummary() {
+        document.getElementById('summaryBtnText').style.display = 'none';
+        document.getElementById('summarySpinner').style.display = 'block';
+
+        const summaryData = prospectsData.map(p => ({
+            name: p.name,
+            company: p.company,
+            location: p.location,
+            priority: p.priority,
+            hook: p.dossier.match(/<strong>Identified Trigger Event & Hook:<\/strong> (.*?)(?=<p>)/s)?.[1].trim() || 'N/A'
+        }));
+
+        const prompt = `
+            You are a B2B Sales Intelligence Strategist. Analyze the following list of prospects for Tom Buckley at Smart Building Solutions.
+            Provide a high-level executive summary. Your summary should:
+            1. Identify the top 3-4 strategic trends or key takeaways from the data (e.g., geographic concentrations, common trigger events, dominant company profiles).
+            2. Highlight the most promising segment to focus on for the upcoming week (e.g., "Hot prospects in Illinois with acquisition triggers").
+            3. Suggest a primary strategic message or theme for this segment.
+            4. Conclude with a concise, actionable recommendation.
+            
+            The output should be well-structured with headings and bullet points for clarity.
+
+            Prospect Data:
+            ${JSON.stringify(summaryData, null, 2)}
+        `;
+
+        try {
+            let chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
+            const payload = { contents: chatHistory };
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+
+            if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
+                const text = result.candidates[0].content.parts[0].text;
+                summaryContent.innerHTML = text.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                summaryModal.style.display = 'flex';
+            } else {
+                summaryContent.innerHTML = '<p class="text-red-500">Error: Could not generate summary. The API response was empty.</p>';
+                summaryModal.style.display = 'flex';
+            }
+        } catch (error) {
+            console.error("Error generating summary:", error);
+            summaryContent.innerHTML = `<p class="text-red-500">An error occurred while generating the summary. Please check the console for details.</p>`;
+            summaryModal.style.display = 'flex';
+        } finally {
+            document.getElementById('summaryBtnText').style.display = 'inline';
+            document.getElementById('summarySpinner').style.display = 'none';
+        }
+    }
+    
+    function copyToClipboard(textContainerId) {
+        const textToCopy = document.getElementById(textContainerId).innerText;
+        const textArea = document.createElement('textarea');
+        textArea.value = textToCopy;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        alert('Copied to clipboard!');
+    }
+
+    searchInput.addEventListener('input', filterAndRender);
+    priorityFilter.addEventListener('change', filterAndRender);
+    stateFilter.addEventListener('change', filterAndRender);
+
+    prospectsTable.addEventListener('click', (e) => {
+        const row = e.target.closest('tr');
+        if (row && row.dataset.id) {
+            showDetailView(row.dataset.id);
+        }
+    });
+
+    closeDetailViewBtn.addEventListener('click', hideDetailView);
+    
+    generateEmailBtn.addEventListener('click', handleGenerateEmail);
+    closeEmailModalBtn.addEventListener('click', () => emailModal.style.display = 'none');
+    copyEmailBtn.addEventListener('click', () => copyToClipboard('emailContent'));
+
+    generateSummaryBtn.addEventListener('click', handleGenerateSummary);
+    closeSummaryModalBtn.addEventListener('click', () => summaryModal.style.display = 'none');
+    copySummaryBtn.addEventListener('click', () => copyToClipboard('summaryContent'));
+
+
+    // Initial render
+    renderKpiCards();
+    populateStateFilter();
+    renderProspects(prospectsData);
+    renderPriorityChart();
+    renderLocationChart();
+});
+</script>
+</body>
+</html>
